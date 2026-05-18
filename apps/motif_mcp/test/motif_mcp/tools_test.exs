@@ -73,10 +73,12 @@ defmodule MotifMcp.ToolsTest do
   end
 
   describe "list_legal_actions" do
-    test "returns moves + end_turn for the current player", %{ctx_alice: ctx} do
+    test "returns moves + suggest + accuse + end_turn for the current player", %{
+      ctx_alice: ctx
+    } do
       assert {:ok, %{"actions" => actions}} = Tools.call(ctx, "list_legal_actions", %{})
       types = actions |> Enum.map(& &1["type"]) |> Enum.sort() |> Enum.uniq()
-      assert types == ["end_turn", "move_to_room"]
+      assert types == ["end_turn", "make_accusation", "make_suggestion", "move_to_room"]
     end
 
     test "returns nothing for the other player", %{ctx_bob: ctx} do
@@ -131,7 +133,7 @@ defmodule MotifMcp.ToolsTest do
   describe "registry" do
     test "catalog lists every tool with name + description + inputSchema" do
       tools = Tools.catalog()
-      assert length(tools) == 5
+      assert length(tools) == 9
 
       for tool <- tools do
         assert is_binary(tool["name"])

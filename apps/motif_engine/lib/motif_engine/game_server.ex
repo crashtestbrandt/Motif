@@ -17,7 +17,7 @@ defmodule MotifEngine.GameServer do
 
   @behaviour :gen_statem
 
-  alias MotifEngine.{Repo, Snapshot}
+  alias MotifEngine.{Events, Repo, Snapshot}
 
   @registry MotifEngine.GameRegistry
 
@@ -94,10 +94,137 @@ defmodule MotifEngine.GameServer do
   # ---- internals ---------------------------------------------------------
 
   defp run_intent(%{game_id: gid, rules_module: rm}, intent) do
-    with {:ok, snapshot} <- Snapshot.load(gid),
-         {:ok, mutations} <- rm.apply_intent(snapshot, intent),
-         :ok <- Repo.transaction(mutations) do
+    with {:ok, before_snap} <- Snapshot.load(gid),
+         {:ok, mutations} <- apply_intent_with_telemetry(rm, before_snap, intent),
+         :ok <- Repo.transaction(mutations),
+         {:ok, after_snap} <- Snapshot.load(gid) do
+      publish_events(gid, intent, before_snap, after_snap)
       :ok
+    end
+  end
+
+  defp apply_intent_with_telemetry(rules_module, snapshot, intent) do
+    metadata = %{
+      game_id: snapshot.game_id,
+      intent_type: Map.get(intent, :type),
+      player_id: Map.get(intent, :player_id),
+      rules_module: rules_module
+    }
+
+    :telemetry.span([:motif_engine, :rules, :apply_intent], metadata, fn ->
+      result = rules_module.apply_intent(snapshot, intent)
+
+      outcome =
+        case result do
+          {:ok, mutations} -> %{outcome: :ok, mutation_count: length(mutations)}
+          {:error, reason} -> %{outcome: :error, reason: reason}
+        end
+
+      {result, Map.merge(metadata, outcome)}
+    end)
+  end
+
+  # ---- event derivation --------------------------------------------------
+
+  defp publish_events(game_id, %{type: :make_suggestion}, _before, after_snap) do
+    case after_snap.pending_suggestion do
+      %{
+        id: sid,
+        suggester_id: suggester,
+        asking_player_id: asking,
+        suggested_card_ids: card_ids
+      } ->
+        cards = Enum.filter(after_snap.cards, &(&1.id in card_ids))
+
+        Events.publish(
+          game_id,
+          {:suggestion_made,
+           %{
+             suggestion_id: sid,
+             suggester_player_id: suggester,
+             asking_player_id: asking,
+             cards: Enum.map(cards, &Map.take(&1, [:kind, :name, :slug]))
+           }}
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp publish_events(game_id, %{type: :respond_to_suggestion}, before_snap, after_snap) do
+    before_sugg = before_snap.pending_suggestion
+
+    case {before_sugg, after_snap.pending_suggestion} do
+      {nil, _} ->
+        :ok
+
+      {%{id: sid, suggester_id: suggester_id} = before, nil} ->
+        # Suggestion just resolved (either disproved or unrefuted).
+        revealed = load_revealed(sid)
+
+        Events.publish(
+          game_id,
+          {:suggestion_response,
+           %{
+             suggestion_id: sid,
+             responder_player_id: before.asking_player_id,
+             disproved?: revealed != nil,
+             asking_player_id: nil,
+             revealed_card: revealed,
+             # Only the suggester learns the specific card.
+             revealed_to_player_id: if(revealed, do: suggester_id, else: nil)
+           }}
+        )
+
+      {%{id: sid}, %{asking_player_id: next_asking} = after_p} when sid == after_p.id ->
+        # cannot_disprove path that didn't end the chain.
+        Events.publish(
+          game_id,
+          {:suggestion_response,
+           %{
+             suggestion_id: sid,
+             responder_player_id: before_sugg.asking_player_id,
+             disproved?: false,
+             asking_player_id: next_asking,
+             revealed_card: nil,
+             revealed_to_player_id: nil
+           }}
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp publish_events(game_id, %{type: :make_accusation, player_id: pid}, _before, after_snap) do
+    correct? = after_snap.winner_player_id == pid
+    game_over? = after_snap.status == "over"
+
+    Events.publish(
+      game_id,
+      {:accusation_resolved,
+       %{
+         accuser_player_id: pid,
+         correct?: correct?,
+         game_over?: game_over?,
+         winner_player_id: after_snap.winner_player_id
+       }}
+    )
+  end
+
+  defp publish_events(_game_id, _intent, _before, _after), do: :ok
+
+  defp load_revealed(suggestion_id) do
+    cypher = """
+    MATCH (s:Suggestion {id: $sid})-[:REVEALED]->(c:Card)
+    RETURN c.slug AS slug, c.name AS name
+    LIMIT 1
+    """
+
+    case Repo.query_all(cypher, %{sid: suggestion_id}) do
+      {:ok, [%{"slug" => slug, "name" => name}]} -> %{slug: slug, name: name}
+      _ -> nil
     end
   end
 end

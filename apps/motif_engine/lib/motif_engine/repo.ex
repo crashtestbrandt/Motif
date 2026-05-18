@@ -48,18 +48,25 @@ defmodule MotifEngine.Repo do
   """
   @spec transaction([Mutation.t()]) :: :ok | {:error, term()}
   def transaction(mutations) when is_list(mutations) do
-    result =
-      Boltx.transaction(@conn, fn conn ->
-        Enum.each(mutations, fn %Mutation{statement: stmt, params: params} ->
-          Boltx.query!(conn, stmt, params)
+    metadata = %{mutation_count: length(mutations)}
+
+    :telemetry.span([:motif_engine, :repo, :transaction], metadata, fn ->
+      result =
+        Boltx.transaction(@conn, fn conn ->
+          Enum.each(mutations, fn %Mutation{statement: stmt, params: params} ->
+            Boltx.query!(conn, stmt, params)
+          end)
+
+          :ok
         end)
 
-        :ok
-      end)
+      reply =
+        case result do
+          {:ok, :ok} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
 
-    case result do
-      {:ok, :ok} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+      {reply, metadata}
+    end)
   end
 end

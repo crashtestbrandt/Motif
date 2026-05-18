@@ -34,8 +34,31 @@ defmodule MotifMcp.Tools.ListLegalActions do
   defp serialize(%{type: :end_turn}),
     do: %{"type" => "end_turn"}
 
-  defp serialize(%{type: type} = intent),
-    do: Map.put(%{}, "type", Atom.to_string(type)) |> Map.merge(stringify_keys(intent, [:type, :player_id]))
+  defp serialize(%{type: :respond_to_suggestion, card_slug: slug}),
+    do: %{"type" => "respond_to_suggestion", "card_slug" => slug}
+
+  defp serialize(%{type: :make_suggestion} = intent) do
+    %{
+      "type" => "make_suggestion",
+      "room_slug" => intent.room_slug,
+      "available_character_slugs" => intent.available_character_slugs,
+      "available_weapon_slugs" => intent.available_weapon_slugs
+    }
+  end
+
+  defp serialize(%{type: :make_accusation} = intent) do
+    %{
+      "type" => "make_accusation",
+      "available_character_slugs" => intent.available_character_slugs,
+      "available_weapon_slugs" => intent.available_weapon_slugs,
+      "available_room_slugs" => intent.available_room_slugs
+    }
+  end
+
+  defp serialize(%{type: type} = intent) do
+    Map.put(%{}, "type", Atom.to_string(type))
+    |> Map.merge(stringify_keys(intent, [:type, :player_id]))
+  end
 
   defp stringify_keys(map, drop) do
     map

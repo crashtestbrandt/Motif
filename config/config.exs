@@ -25,7 +25,7 @@ config :motif_web, MotifWeb.Endpoint,
     formats: [html: MotifWeb.ErrorHTML],
     layout: false
   ],
-  pubsub_server: MotifWeb.PubSub,
+  pubsub_server: Motif.PubSub,
   live_view: [signing_salt: "motif-dev-signing-salt"],
   secret_key_base: "motif-dev-secret-key-base-please-replace-in-prod-this-is-just-for-dev",
   server: true

@@ -9,20 +9,31 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
   defp snapshot do
     %{
       game_id: "g-t",
+      status: "active",
+      can_suggest: true,
       current_turn_player_id: "p1",
+      winner_player_id: nil,
+      lost_player_ids: [],
+      next_player: %{"p1" => "p2", "p2" => "p1"},
       players: [
         %{id: "p1", name: "Alice"},
         %{id: "p2", name: "Bob"}
       ],
+      cards: [],
+      players_hands: %{"p1" => [], "p2" => []},
+      solution: [],
+      pending_suggestion: nil,
       characters: [
         %{
           id: "g-t/character/scarlet",
+          slug: "scarlet",
           name: "Miss Scarlet",
           player_id: "p1",
           room_slug: "hall"
         },
         %{
           id: "g-t/character/mustard",
+          slug: "mustard",
           name: "Colonel Mustard",
           player_id: "p2",
           room_slug: "hall"
@@ -115,11 +126,12 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
   end
 
   describe "apply_intent :end_turn" do
-    test "produces one CURRENT_TURN advance mutation for the current player" do
+    test "advances CURRENT_TURN and resets can_suggest" do
       intent = %{type: :end_turn, player_id: "p1"}
-      assert {:ok, [mutation]} = Clue.apply_intent(snapshot(), intent)
-      assert match?(%Mutation{}, mutation)
-      assert mutation.statement =~ "CURRENT_TURN"
+      assert {:ok, [advance, reset]} = Clue.apply_intent(snapshot(), intent)
+      assert match?(%Mutation{}, advance)
+      assert advance.statement =~ "CURRENT_TURN"
+      assert reset.statement =~ "can_suggest"
     end
 
     test "rejects end_turn when it isn't the caller's turn" do
@@ -129,17 +141,21 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
   end
 
   describe "legal_actions" do
-    test "returns one move per adjacent room PLUS an end_turn for the current player" do
+    test "current player gets moves + make_suggestion + make_accusation + end_turn" do
       actions = Clue.legal_actions(snapshot(), "p1")
 
-      moves = Enum.filter(actions, &(&1.type == :move_to_room))
-      end_turns = Enum.filter(actions, &(&1.type == :end_turn))
+      types = actions |> Enum.map(& &1.type) |> Enum.uniq() |> Enum.sort()
+      assert types == [:end_turn, :make_accusation, :make_suggestion, :move_to_room]
 
+      moves = Enum.filter(actions, &(&1.type == :move_to_room))
       destinations = moves |> Enum.map(& &1.to_room_slug) |> Enum.sort()
       assert destinations == ["billiard", "lounge", "study"]
       assert Enum.all?(moves, &(&1.player_id == "p1"))
+    end
 
-      assert end_turns == [%{type: :end_turn, player_id: "p1"}]
+    test "make_suggestion is offered only when in a room and can_suggest is true" do
+      snap = %{snapshot() | can_suggest: false}
+      refute Enum.any?(Clue.legal_actions(snap, "p1"), &(&1.type == :make_suggestion))
     end
 
     test "returns secret-passage destinations alongside corridor ones" do
@@ -165,15 +181,81 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
       assert Clue.legal_actions(snapshot(), "p2") == []
     end
 
-    test "still returns an end_turn even when the player has no character" do
-      snap = %{snapshot() | characters: []}
-      assert Clue.legal_actions(snap, "p1") == [%{type: :end_turn, player_id: "p1"}]
+    test "returns [] when game is over" do
+      snap = %{snapshot() | status: "over"}
+      assert Clue.legal_actions(snap, "p1") == []
+    end
+
+    test "asking player gets respond_to_suggestion options" do
+      # P1 (the suggester) suggested; P2 is being asked. P2 holds one matching card.
+      char_card_id = "g-t/card/character/scarlet"
+
+      snap = %{
+        snapshot()
+        | cards: [
+            %{id: char_card_id, kind: "character", slug: "scarlet", name: "Miss Scarlet"}
+          ],
+          players_hands: %{"p1" => [], "p2" => [char_card_id]},
+          pending_suggestion: %{
+            id: "s1",
+            state: "pending",
+            suggester_id: "p1",
+            asking_player_id: "p2",
+            suggested_card_ids: [char_card_id],
+            cannot_disprove_player_ids: []
+          }
+      }
+
+      actions = Clue.legal_actions(snap, "p2")
+      assert [%{type: :respond_to_suggestion, card_slug: "scarlet"}] = actions
+    end
+
+    test "asking player with no matching cards gets pass-only" do
+      snap = %{
+        snapshot()
+        | cards: [
+            %{
+              id: "g-t/card/character/scarlet",
+              kind: "character",
+              slug: "scarlet",
+              name: "Miss Scarlet"
+            }
+          ],
+          players_hands: %{"p1" => [], "p2" => []},
+          pending_suggestion: %{
+            id: "s1",
+            state: "pending",
+            suggester_id: "p1",
+            asking_player_id: "p2",
+            suggested_card_ids: ["g-t/card/character/scarlet"],
+            cannot_disprove_player_ids: []
+          }
+      }
+
+      assert [%{type: :respond_to_suggestion, card_slug: nil}] = Clue.legal_actions(snap, "p2")
+    end
+
+    test "non-asking player gets nothing while a suggestion is pending" do
+      snap = %{
+        snapshot()
+        | pending_suggestion: %{
+            id: "s1",
+            state: "pending",
+            suggester_id: "p1",
+            asking_player_id: "p2",
+            suggested_card_ids: [],
+            cannot_disprove_player_ids: []
+          }
+      }
+
+      assert Clue.legal_actions(snap, "p1") == []
     end
   end
 
   defp snap_char("p1"),
     do: %{
       id: "g-t/character/scarlet",
+      slug: "scarlet",
       name: "Miss Scarlet",
       player_id: "p1",
       room_slug: "hall"
@@ -182,6 +264,7 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
   defp snap_char("p2"),
     do: %{
       id: "g-t/character/mustard",
+      slug: "mustard",
       name: "Colonel Mustard",
       player_id: "p2",
       room_slug: "hall"

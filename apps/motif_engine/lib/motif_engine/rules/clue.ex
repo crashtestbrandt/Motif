@@ -87,18 +87,106 @@ defmodule MotifEngine.Rules.Clue do
 
   @impl true
   def legal_actions(snapshot, player_id) do
-    if snapshot.current_turn_player_id == player_id do
-      moves =
-        case character_for(snapshot, player_id) do
-          nil -> []
-          char -> move_intents_from(snapshot, player_id, char.room_slug)
+    cond do
+      snapshot[:status] == "over" ->
+        []
+
+      asking_player = asking_player_id(snapshot) ->
+        if asking_player == player_id do
+          disprove_options(snapshot, player_id)
+        else
+          []
         end
 
-      moves ++ [%{type: :end_turn, player_id: player_id}]
-    else
-      []
+      snapshot.current_turn_player_id == player_id and player_id not in lost_player_ids(snapshot) ->
+        normal_turn_actions(snapshot, player_id)
+
+      true ->
+        []
     end
   end
+
+  defp normal_turn_actions(snapshot, player_id) do
+    moves =
+      case character_for(snapshot, player_id) do
+        nil -> []
+        char -> move_intents_from(snapshot, player_id, char.room_slug)
+      end
+
+    suggest =
+      if snapshot[:can_suggest] && character_for(snapshot, player_id) do
+        char = character_for(snapshot, player_id)
+
+        if char.room_slug do
+          [
+            %{
+              type: :make_suggestion,
+              player_id: player_id,
+              room_slug: char.room_slug,
+              available_character_slugs: list_slugs(snapshot, :character),
+              available_weapon_slugs: list_slugs(snapshot, :weapon)
+            }
+          ]
+        else
+          []
+        end
+      else
+        []
+      end
+
+    accuse = [
+      %{
+        type: :make_accusation,
+        player_id: player_id,
+        available_character_slugs: list_slugs(snapshot, :character),
+        available_weapon_slugs: list_slugs(snapshot, :weapon),
+        available_room_slugs: list_slugs(snapshot, :room)
+      }
+    ]
+
+    moves ++ suggest ++ accuse ++ [%{type: :end_turn, player_id: player_id}]
+  end
+
+  defp disprove_options(snapshot, player_id) do
+    suggestion = snapshot.pending_suggestion
+    matching = matching_held_cards(snapshot, player_id, suggestion.suggested_card_ids)
+
+    case matching do
+      [] ->
+        [%{type: :respond_to_suggestion, player_id: player_id, card_slug: nil}]
+
+      cards ->
+        Enum.map(cards, fn card ->
+          %{type: :respond_to_suggestion, player_id: player_id, card_slug: card.slug}
+        end)
+    end
+  end
+
+  defp matching_held_cards(snapshot, player_id, suggested_ids) do
+    held_ids = Map.get(snapshot.players_hands, player_id, [])
+    matching_ids = Enum.filter(held_ids, &(&1 in suggested_ids))
+    Enum.filter(snapshot.cards, &(&1.id in matching_ids))
+  end
+
+  defp list_slugs(snapshot, :character) do
+    snapshot.characters
+    |> Enum.map(& &1.slug)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort()
+  end
+
+  defp list_slugs(_snapshot, :weapon), do: Enum.map(@weapons, &elem(&1, 0)) |> Enum.sort()
+
+  defp list_slugs(snapshot, :room), do: snapshot.rooms |> Map.keys() |> Enum.sort()
+
+  defp asking_player_id(snapshot) do
+    case snapshot[:pending_suggestion] do
+      nil -> nil
+      %{asking_player_id: pid} -> pid
+    end
+  end
+
+  defp lost_player_ids(snapshot), do: snapshot[:lost_player_ids] || []
 
   @impl true
   def apply_intent(snapshot, %{type: :move_to_room, player_id: pid, to_room_slug: dest}) do
@@ -112,8 +200,67 @@ defmodule MotifEngine.Rules.Clue do
   end
 
   def apply_intent(snapshot, %{type: :end_turn, player_id: pid}) do
-    with :ok <- check_turn(snapshot, pid) do
-      {:ok, [advance_turn_mutation(snapshot.game_id)]}
+    with :ok <- check_game_active(snapshot),
+         :ok <- check_no_pending_suggestion(snapshot),
+         :ok <- check_turn(snapshot, pid) do
+      {:ok, [advance_turn_mutation(snapshot.game_id), reset_can_suggest_mutation(snapshot.game_id)]}
+    end
+  end
+
+  def apply_intent(snapshot, %{
+        type: :make_suggestion,
+        player_id: pid,
+        character_slug: char_slug,
+        weapon_slug: weap_slug
+      }) do
+    with :ok <- check_game_active(snapshot),
+         :ok <- check_no_pending_suggestion(snapshot),
+         :ok <- check_turn(snapshot, pid),
+         :ok <- check_not_lost(snapshot, pid),
+         :ok <- check_can_suggest(snapshot),
+         {:ok, character} <- fetch_character(snapshot, pid),
+         {:ok, room_slug} <- fetch_current_room(character),
+         :ok <- check_slug_exists(snapshot, :character, char_slug),
+         :ok <- check_slug_exists(snapshot, :weapon, weap_slug) do
+      {:ok,
+       suggestion_mutations(
+         snapshot,
+         pid,
+         char_slug,
+         weap_slug,
+         room_slug
+       )}
+    end
+  end
+
+  def apply_intent(snapshot, %{
+        type: :respond_to_suggestion,
+        player_id: pid,
+        card_slug: card_slug
+      }) do
+    with {:ok, suggestion} <- fetch_pending_suggestion(snapshot),
+         :ok <- check_asking(suggestion, pid),
+         {:ok, mutations} <-
+           build_response_mutations(snapshot, suggestion, pid, card_slug) do
+      {:ok, mutations}
+    end
+  end
+
+  def apply_intent(snapshot, %{
+        type: :make_accusation,
+        player_id: pid,
+        character_slug: char_slug,
+        weapon_slug: weap_slug,
+        room_slug: room_slug
+      }) do
+    with :ok <- check_game_active(snapshot),
+         :ok <- check_no_pending_suggestion(snapshot),
+         :ok <- check_turn(snapshot, pid),
+         :ok <- check_not_lost(snapshot, pid),
+         :ok <- check_slug_exists(snapshot, :character, char_slug),
+         :ok <- check_slug_exists(snapshot, :weapon, weap_slug),
+         :ok <- check_slug_exists(snapshot, :room, room_slug) do
+      {:ok, accusation_mutations(snapshot, pid, char_slug, weap_slug, room_slug)}
     end
   end
 
@@ -169,6 +316,59 @@ defmodule MotifEngine.Rules.Clue do
     end
   end
 
+  defp check_game_active(snapshot) do
+    if snapshot[:status] == "over", do: {:error, :game_over}, else: :ok
+  end
+
+  defp check_no_pending_suggestion(snapshot) do
+    if snapshot[:pending_suggestion],
+      do: {:error, :suggestion_in_progress},
+      else: :ok
+  end
+
+  defp check_not_lost(snapshot, pid) do
+    if pid in (snapshot[:lost_player_ids] || []),
+      do: {:error, :player_eliminated},
+      else: :ok
+  end
+
+  defp check_can_suggest(snapshot) do
+    if snapshot[:can_suggest] == false,
+      do: {:error, :already_suggested_this_turn},
+      else: :ok
+  end
+
+  defp check_slug_exists(snapshot, :character, slug) do
+    if Enum.any?(snapshot.characters, &(&1.slug == slug)),
+      do: :ok,
+      else: {:error, {:unknown_character, slug}}
+  end
+
+  defp check_slug_exists(_snapshot, :weapon, slug) do
+    if Enum.any?(@weapons, &(elem(&1, 0) == slug)),
+      do: :ok,
+      else: {:error, {:unknown_weapon, slug}}
+  end
+
+  defp check_slug_exists(snapshot, :room, slug) do
+    if Map.has_key?(snapshot.rooms, slug),
+      do: :ok,
+      else: {:error, {:unknown_room, slug}}
+  end
+
+  defp fetch_pending_suggestion(snapshot) do
+    case snapshot[:pending_suggestion] do
+      nil -> {:error, :no_pending_suggestion}
+      s -> {:ok, s}
+    end
+  end
+
+  defp check_asking(suggestion, pid) do
+    if suggestion.asking_player_id == pid,
+      do: :ok,
+      else: {:error, :not_your_turn_to_disprove}
+  end
+
   defp move_mutations(game_id, character_id, dest_slug) do
     [
       Mutation.new(
@@ -190,14 +390,291 @@ defmodule MotifEngine.Rules.Clue do
   end
 
   defp advance_turn_mutation(game_id) do
+    # Skip players marked :LOST when advancing turn order. Lost players
+    # remain in the :NEXT ring (they still disprove suggestions) but
+    # can never have :CURRENT_TURN.
     Mutation.new(
       """
-      MATCH (g:Game {id: $game_id})-[r:CURRENT_TURN]->(:Player)-[:NEXT]->(next:Player)
+      MATCH (g:Game {id: $game_id})-[r:CURRENT_TURN]->(cur:Player)
+      WITH g, r, cur
+      MATCH path = (cur)-[:NEXT*1..6]->(next:Player)
+      WHERE NOT (next)-[:LOST]->(g)
+      WITH g, r, next, length(path) AS hop
+      ORDER BY hop ASC
+      LIMIT 1
       DELETE r
       CREATE (g)-[:CURRENT_TURN]->(next)
       """,
       %{game_id: game_id}
     )
+  end
+
+  defp reset_can_suggest_mutation(game_id) do
+    Mutation.new(
+      "MATCH (g:Game {id: $game_id}) SET g.can_suggest = true",
+      %{game_id: game_id}
+    )
+  end
+
+  # ---- suggestion mutations ----------------------------------------------
+
+  defp suggestion_mutations(snapshot, suggester_id, char_slug, weap_slug, room_slug) do
+    game_id = snapshot.game_id
+    # Deterministic id: derived from how many suggestions already exist
+    # in the snapshot. Two replays of the same intent sequence against
+    # the same starting state produce identical ids (ADR-0006 purity).
+    suggestion_id = "#{game_id}/suggestion/#{(snapshot[:suggestion_count] || 0) + 1}"
+
+    suggested_card_ids = [
+      "#{game_id}/card/character/#{char_slug}",
+      "#{game_id}/card/weapon/#{weap_slug}",
+      "#{game_id}/card/room/#{room_slug}"
+    ]
+
+    asking_player_id = snapshot.next_player[suggester_id]
+
+    [
+      Mutation.new(
+        """
+        MATCH (g:Game {id: $game_id})
+        MATCH (suggester:Player {id: $suggester_id})
+        CREATE (s:Suggestion {
+                  id: $sid,
+                  state: 'pending',
+                  made_at: timestamp()
+                })-[:IN_GAME]->(g)
+        CREATE (s)-[:MADE_BY]->(suggester)
+        """,
+        %{game_id: game_id, suggester_id: suggester_id, sid: suggestion_id}
+      ),
+      Mutation.new(
+        """
+        MATCH (s:Suggestion {id: $sid})
+        UNWIND $card_ids AS card_id
+        MATCH (c:Card {id: card_id})
+        CREATE (s)-[:SUGGESTED]->(c)
+        """,
+        %{sid: suggestion_id, card_ids: suggested_card_ids}
+      ),
+      Mutation.new(
+        # Move the SUGGESTED character pawn to this room (classic Clue
+        # rule: even if that pawn belongs to someone else, they get
+        # dragged into the room).
+        """
+        MATCH (char:Character {slug: $char_slug})-[:IN_GAME]->(g:Game {id: $game_id})
+        OPTIONAL MATCH (char)-[old:LOCATED_IN]->(:Room)
+        DELETE old
+        WITH char, g
+        MATCH (room:Room {slug: $room_slug})-[:IN_GAME]->(g)
+        CREATE (char)-[:LOCATED_IN]->(room)
+        """,
+        %{game_id: game_id, char_slug: char_slug, room_slug: room_slug}
+      ),
+      Mutation.new(
+        """
+        MATCH (s:Suggestion {id: $sid})
+        MATCH (p:Player {id: $asking_id})
+        CREATE (s)-[:ASKING]->(p)
+        """,
+        %{sid: suggestion_id, asking_id: asking_player_id}
+      ),
+      Mutation.new(
+        "MATCH (g:Game {id: $game_id}) SET g.can_suggest = false",
+        %{game_id: game_id}
+      )
+    ]
+  end
+
+  # ---- response mutations ------------------------------------------------
+
+  # Player IS disproving (revealed a card).
+  defp build_response_mutations(snapshot, suggestion, pid, card_slug) when is_binary(card_slug) do
+    revealed_card_id = card_id_by_slug(snapshot, card_slug)
+    held_ids = Map.get(snapshot.players_hands, pid, [])
+
+    cond do
+      revealed_card_id == nil ->
+        {:error, {:unknown_card, card_slug}}
+
+      revealed_card_id not in held_ids ->
+        {:error, :card_not_in_hand}
+
+      revealed_card_id not in suggestion.suggested_card_ids ->
+        {:error, :card_does_not_match_suggestion}
+
+      true ->
+        {:ok,
+         [
+           Mutation.new(
+             """
+             MATCH (s:Suggestion {id: $sid})-[ask:ASKING]->(:Player)
+             MATCH (p:Player {id: $pid})
+             MATCH (c:Card {id: $card_id})
+             DELETE ask
+             CREATE (s)-[:DISPROVED_BY]->(p)
+             CREATE (s)-[:REVEALED]->(c)
+             SET s.state = 'disproven'
+             """,
+             %{sid: suggestion.id, pid: pid, card_id: revealed_card_id}
+           )
+         ]}
+    end
+  end
+
+  # Player claims they CANNOT disprove.
+  defp build_response_mutations(snapshot, suggestion, pid, nil) do
+    held_ids = Map.get(snapshot.players_hands, pid, [])
+
+    if Enum.any?(held_ids, &(&1 in suggestion.suggested_card_ids)) do
+      {:error, :must_disprove_with_held_card}
+    else
+      next = snapshot.next_player[pid]
+      suggester_id = suggestion.suggester_id
+
+      record_cannot =
+        Mutation.new(
+          """
+          MATCH (s:Suggestion {id: $sid})-[ask:ASKING]->(:Player)
+          MATCH (p:Player {id: $pid})
+          DELETE ask
+          CREATE (s)-[:CANNOT_DISPROVE]->(p)
+          """,
+          %{sid: suggestion.id, pid: pid}
+        )
+
+      cond do
+        next == suggester_id ->
+          # We've cycled back to the suggester — no one could disprove.
+          {:ok,
+           [
+             record_cannot,
+             Mutation.new(
+               "MATCH (s:Suggestion {id: $sid}) SET s.state = 'unrefuted'",
+               %{sid: suggestion.id}
+             )
+           ]}
+
+        true ->
+          {:ok,
+           [
+             record_cannot,
+             Mutation.new(
+               """
+               MATCH (s:Suggestion {id: $sid})
+               MATCH (p:Player {id: $next_id})
+               CREATE (s)-[:ASKING]->(p)
+               """,
+               %{sid: suggestion.id, next_id: next}
+             )
+           ]}
+      end
+    end
+  end
+
+  defp card_id_by_slug(snapshot, slug) do
+    snapshot.cards
+    |> Enum.find(&(&1.slug == slug))
+    |> case do
+      nil -> nil
+      %{id: id} -> id
+    end
+  end
+
+  # ---- accusation mutations ----------------------------------------------
+
+  defp accusation_mutations(snapshot, pid, char_slug, weap_slug, room_slug) do
+    game_id = snapshot.game_id
+    # Deterministic, snapshot-derived (see suggestion_mutations).
+    accusation_id = "#{game_id}/accusation/#{(snapshot[:accusation_count] || 0) + 1}"
+
+    accused_card_ids = [
+      "#{game_id}/card/character/#{char_slug}",
+      "#{game_id}/card/weapon/#{weap_slug}",
+      "#{game_id}/card/room/#{room_slug}"
+    ]
+
+    correct? = MapSet.new(accused_card_ids) == MapSet.new(snapshot.solution)
+
+    base = [
+      Mutation.new(
+        """
+        MATCH (g:Game {id: $game_id})
+        MATCH (p:Player {id: $pid})
+        CREATE (a:Accusation {
+                  id: $aid,
+                  correct: $correct,
+                  made_at: timestamp()
+                })-[:IN_GAME]->(g)
+        CREATE (a)-[:MADE_BY]->(p)
+        """,
+        %{game_id: game_id, pid: pid, aid: accusation_id, correct: correct?}
+      ),
+      Mutation.new(
+        """
+        MATCH (a:Accusation {id: $aid})
+        UNWIND $card_ids AS card_id
+        MATCH (c:Card {id: card_id})
+        CREATE (a)-[:ACCUSES_OF]->(c)
+        """,
+        %{aid: accusation_id, card_ids: accused_card_ids}
+      )
+    ]
+
+    outcome =
+      if correct? do
+        [
+          Mutation.new(
+            """
+            MATCH (g:Game {id: $game_id})
+            MATCH (p:Player {id: $pid})
+            CREATE (g)-[:WON]->(p)
+            SET g.status = 'over'
+            """,
+            %{game_id: game_id, pid: pid}
+          )
+        ]
+      else
+        wrong_accusation_mutations(snapshot, pid)
+      end
+
+    base ++ outcome
+  end
+
+  defp wrong_accusation_mutations(snapshot, pid) do
+    game_id = snapshot.game_id
+
+    mark_lost =
+      Mutation.new(
+        """
+        MATCH (g:Game {id: $game_id})
+        MATCH (p:Player {id: $pid})
+        CREATE (p)-[:LOST]->(g)
+        """,
+        %{game_id: game_id, pid: pid}
+      )
+
+    remaining_after =
+      Enum.reject(snapshot.players, fn p -> p.id == pid or p.id in lost_player_ids(snapshot) end)
+
+    case remaining_after do
+      [last] ->
+        # Win-by-elimination: only one undefeated player remains.
+        [
+          mark_lost,
+          Mutation.new(
+            """
+            MATCH (g:Game {id: $game_id})
+            MATCH (winner:Player {id: $winner_id})
+            CREATE (g)-[:WON]->(winner)
+            SET g.status = 'over'
+            """,
+            %{game_id: game_id, winner_id: last.id}
+          )
+        ]
+
+      _ ->
+        [mark_lost, advance_turn_mutation(game_id), reset_can_suggest_mutation(game_id)]
+    end
   end
 
   # ---- opt parsing & validation -------------------------------------------
@@ -318,7 +795,10 @@ defmodule MotifEngine.Rules.Clue do
 
   defp create_game(game_id) do
     Mutation.new(
-      "CREATE (:Game {id: $id, rules: $rules, created_at: timestamp()})",
+      """
+      CREATE (:Game {id: $id, rules: $rules, created_at: timestamp(),
+                     can_suggest: true, status: 'active'})
+      """,
       %{id: game_id, rules: Atom.to_string(__MODULE__)}
     )
   end
@@ -362,26 +842,30 @@ defmodule MotifEngine.Rules.Clue do
   end
 
   defp create_characters(game_id) do
-    rows = for {slug, name} <- @characters, do: %{id: "#{game_id}/character/#{slug}", name: name}
+    rows =
+      for {slug, name} <- @characters,
+          do: %{id: "#{game_id}/character/#{slug}", slug: slug, name: name}
 
     Mutation.new(
       """
       MATCH (g:Game {id: $game_id})
       UNWIND $rows AS r
-      CREATE (:Character {id: r.id, name: r.name})-[:IN_GAME]->(g)
+      CREATE (:Character {id: r.id, slug: r.slug, name: r.name})-[:IN_GAME]->(g)
       """,
       %{game_id: game_id, rows: rows}
     )
   end
 
   defp create_weapons(game_id) do
-    rows = for {slug, name} <- @weapons, do: %{id: "#{game_id}/weapon/#{slug}", name: name}
+    rows =
+      for {slug, name} <- @weapons,
+          do: %{id: "#{game_id}/weapon/#{slug}", slug: slug, name: name}
 
     Mutation.new(
       """
       MATCH (g:Game {id: $game_id})
       UNWIND $rows AS r
-      CREATE (:Weapon {id: r.id, name: r.name})-[:IN_GAME]->(g)
+      CREATE (:Weapon {id: r.id, slug: r.slug, name: r.name})-[:IN_GAME]->(g)
       """,
       %{game_id: game_id, rows: rows}
     )
@@ -433,14 +917,21 @@ defmodule MotifEngine.Rules.Clue do
   end
 
   defp create_cards(game_id, cards) do
+    rows = Enum.map(cards, fn c -> Map.put(c, :slug, slug_from_card_id(c.id)) end)
+
     Mutation.new(
       """
       MATCH (g:Game {id: $game_id})
       UNWIND $rows AS r
-      CREATE (:Card {id: r.id, kind: r.kind, name: r.name})-[:IN_GAME]->(g)
+      CREATE (:Card {id: r.id, kind: r.kind, slug: r.slug, name: r.name})-[:IN_GAME]->(g)
       """,
-      %{game_id: game_id, rows: cards}
+      %{game_id: game_id, rows: rows}
     )
+  end
+
+  defp slug_from_card_id(id) do
+    # id is "<game>/card/<kind>/<slug>"
+    id |> String.split("/") |> List.last()
   end
 
   defp create_solution(game_id, solution_ids) do

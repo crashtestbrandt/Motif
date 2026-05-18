@@ -6,6 +6,7 @@ defmodule MotifEngine.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Phoenix.PubSub, name: Motif.PubSub},
       {Boltx, Application.fetch_env!(:boltx, MotifEngine.Bolt)},
       {Registry, keys: :unique, name: MotifEngine.GameRegistry},
       MotifEngine.GameSupervisor

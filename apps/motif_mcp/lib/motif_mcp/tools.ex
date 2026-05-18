@@ -11,7 +11,11 @@ defmodule MotifMcp.Tools do
     MotifMcp.Tools.GetMyHand,
     MotifMcp.Tools.GetMyLocation,
     MotifMcp.Tools.ListLegalActions,
+    MotifMcp.Tools.ListRecentSuggestions,
     MotifMcp.Tools.MoveToRoom,
+    MotifMcp.Tools.MakeSuggestion,
+    MotifMcp.Tools.RespondToSuggestion,
+    MotifMcp.Tools.MakeAccusation,
     MotifMcp.Tools.EndTurn
   ]
 

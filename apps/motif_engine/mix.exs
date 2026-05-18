@@ -18,7 +18,7 @@ defmodule MotifEngine.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :phoenix_pubsub],
       mod: {MotifEngine.Application, []}
     ]
   end
@@ -26,7 +26,8 @@ defmodule MotifEngine.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:boltx, "~> 0.0.6"}
+      {:boltx, "~> 0.0.6"},
+      {:phoenix_pubsub, "~> 2.1"}
     ]
   end
 end

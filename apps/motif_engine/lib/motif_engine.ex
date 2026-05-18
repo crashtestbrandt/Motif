@@ -67,6 +67,68 @@ defmodule MotifEngine do
   end
 
   @doc """
+  Read-only: list the suggestions made in this game so far, filtered by
+  what the calling player is permitted to see.
+
+  Every entry includes: suggester, suggested cards, responder, whether
+  it was disproven, and the players who said "cannot disprove". The
+  `:revealed` card is included **only** when the caller is the
+  suggester (they were shown it) or the responder (they revealed it).
+  """
+  @spec get_recent_suggestions(Rules.game_id(), Rules.player_id()) ::
+          {:ok, [map()]} | {:error, term()}
+  def get_recent_suggestions(game_id, player_id) do
+    cypher = """
+    MATCH (s:Suggestion)-[:IN_GAME]->(g:Game {id: $game_id})
+    MATCH (s)-[:MADE_BY]->(suggester:Player)
+    OPTIONAL MATCH (s)-[:DISPROVED_BY]->(disprover:Player)
+    OPTIONAL MATCH (s)-[:REVEALED]->(revealed:Card)
+    OPTIONAL MATCH (s)-[:SUGGESTED]->(c:Card)
+    WITH s, suggester, disprover, revealed, collect(DISTINCT c {.slug, .kind, .name}) AS cards
+    OPTIONAL MATCH (s)-[:CANNOT_DISPROVE]->(no:Player)
+    RETURN s.id AS id, s.state AS state, s.made_at AS made_at,
+           suggester.id AS suggester_id,
+           disprover.id AS disprover_id,
+           revealed.slug AS revealed_card_slug,
+           revealed.name AS revealed_card_name,
+           cards,
+           collect(DISTINCT no.id) AS cannot_disprove_player_ids
+    ORDER BY made_at ASC
+    """
+
+    case Repo.query_all(cypher, %{game_id: game_id}) do
+      {:ok, rows} ->
+        {:ok, Enum.map(rows, &project_suggestion(&1, player_id))}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp project_suggestion(row, viewer_id) do
+    is_suggester = row["suggester_id"] == viewer_id
+    is_disprover = row["disprover_id"] == viewer_id
+
+    base = %{
+      "id" => row["id"],
+      "state" => row["state"],
+      "suggester_player_id" => row["suggester_id"],
+      "disprover_player_id" => row["disprover_id"],
+      "suggested_cards" => row["cards"],
+      "cannot_disprove_player_ids" => row["cannot_disprove_player_ids"]
+    }
+
+    if (is_suggester or is_disprover) and row["revealed_card_slug"] do
+      Map.put(base, "revealed_card", %{
+        "slug" => row["revealed_card_slug"],
+        "name" => row["revealed_card_name"]
+      })
+    else
+      base
+    end
+  end
+
+  @doc """
   Read-only: return the room the player's character is currently in.
   """
   @spec get_player_location(Rules.game_id(), Rules.player_id()) ::

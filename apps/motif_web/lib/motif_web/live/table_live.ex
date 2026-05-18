@@ -8,57 +8,45 @@ defmodule MotifWeb.TableLive do
   use MotifWeb, :live_view
 
   alias MotifMcp.Auth
+  alias MotifEngine.Events
   alias MotifWeb.{LLM, McpClient}
 
   @impl true
   def mount(%{"game_id" => game_id, "player_id" => player_id}, _session, socket) do
+    socket =
+      socket
+      |> assign(:game_id, game_id)
+      |> assign(:player_id, player_id)
+      |> assign(:player_name, derive_player_name(player_id))
+      |> assign(:conversation, [])
+      |> assign(:pending_messages, [])
+      |> assign(:pending_nudge?, false)
+      |> assign(:loading?, false)
+      |> assign(:error, nil)
+      |> assign(:input, "")
+      |> assign(:session_id, nil)
+      |> assign(:tools, [])
+      |> assign(:system_prompt, "")
+      |> assign(:page_title, "motif")
+
     if connected?(socket) do
+      :ok = Events.subscribe(game_id)
+
       with {:ok, token} <- Auth.issue_token(game_id, player_id),
            {:ok, session_id} <- McpClient.open_session(token),
            {:ok, tools} <- McpClient.list_tools(session_id) do
         {:ok,
          socket
-         |> assign(:game_id, game_id)
-         |> assign(:player_id, player_id)
-         |> assign(:player_name, derive_player_name(player_id))
          |> assign(:session_id, session_id)
          |> assign(:tools, tools)
          |> assign(:system_prompt, system_prompt(player_id))
-         |> assign(:conversation, [])
-         |> assign(:loading?, false)
-         |> assign(:error, nil)
-         |> assign(:input, "")
          |> assign(:page_title, "motif · #{derive_player_name(player_id)}")}
       else
         {:error, reason} ->
-          {:ok,
-           socket
-           |> assign(:error, "could not start session: #{inspect(reason)}")
-           |> assign(:game_id, game_id)
-           |> assign(:player_id, player_id)
-           |> assign(:player_name, derive_player_name(player_id))
-           |> assign(:conversation, [])
-           |> assign(:loading?, false)
-           |> assign(:input, "")
-           |> assign(:tools, [])
-           |> assign(:session_id, nil)
-           |> assign(:system_prompt, "")
-           |> assign(:page_title, "motif")}
+          {:ok, assign(socket, :error, "could not start session: #{inspect(reason)}")}
       end
     else
-      {:ok,
-       socket
-       |> assign(:game_id, game_id)
-       |> assign(:player_id, player_id)
-       |> assign(:player_name, derive_player_name(player_id))
-       |> assign(:session_id, nil)
-       |> assign(:tools, [])
-       |> assign(:system_prompt, "")
-       |> assign(:conversation, [])
-       |> assign(:loading?, false)
-       |> assign(:error, nil)
-       |> assign(:input, "")
-       |> assign(:page_title, "motif")}
+      {:ok, socket}
     end
   end
 
@@ -93,17 +81,197 @@ defmodule MotifWeb.TableLive do
 
   @impl true
   def handle_info({:turn_done, {:ok, conversation}}, socket) do
-    {:noreply,
-     socket
-     |> assign(:conversation, conversation)
-     |> assign(:loading?, false)}
+    # The turn we spawned has finished. Apply any [game] notes that
+    # arrived from PubSub *during* the turn — those were stashed in
+    # :pending_messages so they wouldn't be clobbered when the turn's
+    # result conversation came back. If any of those pending messages
+    # was a "nudge" (an event the LLM should act on), kick off a new
+    # turn now to process them.
+    {conversation, socket} = flush_pending(conversation, socket)
+
+    if socket.assigns.pending_nudge? do
+      start_turn(self(), conversation, socket.assigns)
+
+      {:noreply,
+       socket
+       |> assign(:conversation, conversation)
+       |> assign(:pending_nudge?, false)
+       |> assign(:loading?, true)}
+    else
+      {:noreply,
+       socket
+       |> assign(:conversation, conversation)
+       |> assign(:loading?, false)}
+    end
   end
 
   def handle_info({:turn_done, {:error, reason}}, socket) do
+    {conversation, socket} = flush_pending(socket.assigns.conversation, socket)
+
     {:noreply,
      socket
+     |> assign(:conversation, conversation)
+     |> assign(:pending_nudge?, false)
      |> assign(:error, format_error(reason))
      |> assign(:loading?, false)}
+  end
+
+  # ---- cross-player events ------------------------------------------------
+
+  def handle_info({:suggestion_made, payload}, socket) do
+    handle_game_event(socket, suggestion_made_message(payload, socket.assigns.player_id))
+  end
+
+  def handle_info({:suggestion_response, payload}, socket) do
+    handle_game_event(socket, suggestion_response_message(payload, socket.assigns.player_id))
+  end
+
+  def handle_info({:accusation_resolved, payload}, socket) do
+    handle_game_event(socket, accusation_message(payload, socket.assigns.player_id))
+  end
+
+  defp handle_game_event(socket, :ignore), do: {:noreply, socket}
+
+  defp handle_game_event(socket, {:note, text}) do
+    if socket.assigns.loading? do
+      # A turn is running; stash so the spawned process's returned
+      # conversation doesn't overwrite the note when it lands.
+      {:noreply, stash_message(socket, note_msg(text))}
+    else
+      {:noreply, append_note(socket, text)}
+    end
+  end
+
+  defp handle_game_event(socket, {:nudge, text}) do
+    if socket.assigns.loading? do
+      # Stash AND remember to re-trigger when the current turn finishes.
+      {:noreply,
+       socket
+       |> stash_message(note_msg(text))
+       |> assign(:pending_nudge?, true)}
+    else
+      socket = append_note(socket, text)
+      start_turn(self(), socket.assigns.conversation, socket.assigns)
+      {:noreply, assign(socket, loading?: true)}
+    end
+  end
+
+  defp note_msg(text), do: %{"role" => "user", "content" => "[game] " <> text}
+
+  defp append_note(socket, text) do
+    assign(socket, :conversation, socket.assigns.conversation ++ [note_msg(text)])
+  end
+
+  defp stash_message(socket, msg) do
+    update(socket, :pending_messages, fn pending -> pending ++ [msg] end)
+  end
+
+  defp flush_pending(conversation, socket) do
+    pending = socket.assigns.pending_messages
+    {conversation ++ pending, assign(socket, :pending_messages, [])}
+  end
+
+  # A suggestion just landed. Three audiences:
+  #   * the asking player → must respond → :nudge
+  #   * the suggester → informational only
+  #   * other players → informational only
+  defp suggestion_made_message(payload, viewer_id) do
+    %{
+      suggester_player_id: suggester,
+      asking_player_id: asking,
+      cards: cards
+    } = payload
+
+    card_phrase = cards |> Enum.map_join(", ", & &1.name)
+
+    cond do
+      asking == viewer_id ->
+        {:nudge,
+         "You are being asked to disprove the suggestion: #{card_phrase}. " <>
+           "If you hold any of those cards, reveal one with respond_to_suggestion. " <>
+           "If you hold none, pass with card_slug: null."}
+
+      suggester == viewer_id ->
+        {:note, "Your suggestion is out (#{card_phrase}). Waiting on the next player to respond."}
+
+      true ->
+        {:note, "A suggestion was made: #{card_phrase}. " <>
+                "The next player is being asked to disprove."}
+    end
+  end
+
+  # A response landed. Possible audiences for an event with these fields:
+  defp suggestion_response_message(payload, viewer_id) do
+    %{
+      responder_player_id: responder,
+      disproved?: disproved?,
+      asking_player_id: next_asking,
+      revealed_card: revealed,
+      revealed_to_player_id: revealed_to
+    } = payload
+
+    cond do
+      # Card was revealed and I'm the one allowed to see it.
+      disproved? and revealed_to == viewer_id and revealed != nil ->
+        {:nudge,
+         "Disproved: a player showed you the #{revealed.name}. " <>
+           "Decide whether to accuse, move, or end turn."}
+
+      # I responded (whether disproved or not).
+      responder == viewer_id ->
+        if disproved? do
+          {:note, "You disproved the suggestion."}
+        else
+          {:note, "You said you couldn't disprove."}
+        end
+
+      # I'm next to disprove.
+      next_asking == viewer_id ->
+        {:nudge,
+         "The previous player couldn't disprove. " <>
+           "Now you are being asked. Use respond_to_suggestion."}
+
+      # Public resolution.
+      disproved? ->
+        {:note, "The suggestion was disproved by someone (card hidden)."}
+
+      next_asking == nil ->
+        {:note, "No one could disprove the suggestion."}
+
+      true ->
+        :ignore
+    end
+  end
+
+  defp accusation_message(payload, viewer_id) do
+    %{
+      accuser_player_id: accuser,
+      correct?: correct?,
+      game_over?: game_over?,
+      winner_player_id: winner
+    } = payload
+
+    cond do
+      correct? and winner == viewer_id ->
+        {:note, "You accused correctly. You win!"}
+
+      correct? ->
+        {:note, "The game is over: another player accused correctly and won."}
+
+      accuser == viewer_id ->
+        {:note, "Your accusation was wrong. You're eliminated from acting but " <>
+                "your hand will still disprove future suggestions."}
+
+      game_over? and winner == viewer_id ->
+        {:note,
+         "Everyone else has been eliminated. You win by elimination!"}
+
+      game_over? ->
+        {:note, "The game ended: only one player remained after a wrong accusation."}
+
+      true ->
+        {:note, "A wrong accusation was made; that player is eliminated from acting."}
+    end
   end
 
   # ---- the tool-use loop -------------------------------------------------
@@ -172,28 +340,45 @@ defmodule MotifWeb.TableLive do
     name = derive_player_name(player_id)
 
     """
-    You are #{name}, a detective in a game of Clue (Cluedo).
+    You are #{name}, a detective in a game of Clue (Cluedo). You are
+    trying to deduce who committed the murder, with what weapon, and in
+    which room — the three cards held in the hidden solution envelope.
 
-    The game state lives in a knowledge graph that you can only access
-    through the MCP tools listed below. Always call the appropriate tool
-    rather than guessing — and never claim to know another player's hand
-    (you cannot see it).
+    The game state lives in a knowledge graph you can only read through
+    the MCP tools below. Always call the appropriate tool rather than
+    guessing. Never claim to know another player's hand — you cannot
+    see it; the engine enforces this.
 
     Tools available:
       - get_my_hand: your private hand of cards.
       - get_my_location: the room your character is in.
-      - list_legal_actions: what you can do right now (typically a list of
-        rooms you can move to plus an `end_turn`).
+      - list_legal_actions: what you can do right now. Read this often;
+        it is the source of truth for what's possible.
+      - list_recent_suggestions: the suggestion history so far. The
+        specific card revealed in a disproof is visible only on
+        suggestions you made or disproved.
       - move_to_room: move your character to an adjacent room.
+      - make_suggestion: propose <character> in your current room with
+        <weapon>. Other players are then asked to disprove.
+      - respond_to_suggestion: only callable when you are being asked.
+        Reveal one of your cards that matches the suggestion, or pass
+        with card_slug: null if you hold none of the three.
+      - make_accusation: final guess. Correct = win, wrong = you're
+        eliminated from acting.
       - end_turn: yield to the next player.
+
+    [game]-prefixed messages in this conversation are system notes from
+    the engine (e.g. "you're being asked to disprove..."). Treat them
+    as authoritative and act on them — typically by calling
+    list_legal_actions to see your options, then the appropriate tool.
 
     Style:
       - Be concise. One short paragraph per response.
-      - When the user gives you a directive (e.g. "move to the library"),
-        call the matching tool and report what happened. If the requested
-        action is illegal, explain why and offer the closest legal option.
-      - When the user asks an open question (e.g. "what's my plan?"), feel
-        free to reason a bit, but use tools to ground anything factual.
+      - When the user gives a directive, call the matching tool and
+        report what happened. If illegal, explain why and offer the
+        closest legal option.
+      - When the user asks an open question, feel free to reason a bit,
+        but use tools to ground anything factual.
       - If a tool returns an error, explain it in plain language.
     """
   end
@@ -205,7 +390,9 @@ defmodule MotifWeb.TableLive do
     end
   end
 
+  defp format_error({:rpc, _code, message}) when is_binary(message), do: message
   defp format_error(reason) when is_binary(reason), do: reason
+  defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason), do: inspect(reason)
 
   # ---- render ------------------------------------------------------------

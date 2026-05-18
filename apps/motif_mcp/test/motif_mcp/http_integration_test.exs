@@ -52,15 +52,18 @@ defmodule MotifMcp.HttpIntegrationTest do
   end
 
   describe "tools/list" do
-    test "returns the full 5-tool catalog", %{alice_session: sid} do
+    test "returns the full tool catalog", %{alice_session: sid} do
       resp = rpc(sid, "tools/list")
       assert resp["jsonrpc"] == "2.0"
-      assert length(resp["result"]["tools"]) == 5
+      assert length(resp["result"]["tools"]) == 9
 
       names = Enum.map(resp["result"]["tools"], & &1["name"])
-      assert "get_my_hand" in names
-      assert "move_to_room" in names
-      assert "end_turn" in names
+
+      for name <-
+            ~w(get_my_hand get_my_location list_legal_actions list_recent_suggestions
+               move_to_room make_suggestion respond_to_suggestion make_accusation end_turn) do
+        assert name in names, "missing tool: #{name}"
+      end
     end
 
     test "no tool's input_schema accepts a player_id property (architectural invariant)",

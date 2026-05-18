@@ -6,7 +6,6 @@ defmodule MotifWeb.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Phoenix.PubSub, name: MotifWeb.PubSub},
       MotifWeb.Endpoint
     ]
 

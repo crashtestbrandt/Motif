@@ -72,9 +72,122 @@ defmodule MotifMcp.JsonRpc do
   defp finish(id, {:rpc_error, code, message}),
     do: %{"jsonrpc" => "2.0", "id" => id, "error" => %{"code" => code, "message" => message}}
 
-  defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp format_error(reason) when is_binary(reason), do: reason
-  defp format_error(reason), do: inspect(reason)
+  @doc """
+  Translate engine errors into plain-English strings the LLM can
+  actually read. Engine errors arrive as atoms (`:not_your_turn`) or
+  small tuples (`{:unreachable_room, from: ..., to: ...}`); the LLM
+  tool_result content is just text, so `inspect/1`-style output is
+  unhelpful — especially for smaller models.
+
+  Public for testing; not part of the JSON-RPC public surface.
+  """
+  @spec format_error(term()) :: String.t()
+  def format_error(reason) when is_atom(reason), do: humanize(Atom.to_string(reason))
+  def format_error(reason) when is_binary(reason), do: humanize(reason)
+  def format_error({:unreachable_room, from: from, to: to}),
+    do: "You can't move from the #{room_name(from)} to the #{room_name(to)} — they aren't connected."
+
+  def format_error({:unknown_room, slug}),
+    do: "There is no room called '#{slug}'."
+
+  def format_error({:unknown_character, slug}),
+    do: "There is no character called '#{slug}'."
+
+  def format_error({:unknown_weapon, slug}),
+    do: "There is no weapon called '#{slug}'."
+
+  def format_error({:unknown_card, slug}),
+    do: "There is no card called '#{slug}'."
+
+  def format_error({:missing_opt, key}),
+    do: "Missing required option: #{key}."
+
+  def format_error({:too_few_players, n}),
+    do: "Need at least 2 players (got #{n})."
+
+  def format_error({:too_many_players, n}),
+    do: "At most 6 players supported (got #{n})."
+
+  def format_error({:unknown_intent, _}),
+    do: "Unknown intent type."
+
+  def format_error(reason), do: inspect(reason)
+
+  defp humanize("not_your_turn"), do: "It's not your turn right now."
+
+  defp humanize("not_your_turn_to_disprove"),
+    do: "You are not the player currently being asked to disprove."
+
+  defp humanize("suggestion_in_progress"),
+    do: "A suggestion is in progress — wait until it's resolved before doing anything else."
+
+  defp humanize("no_pending_suggestion"),
+    do: "There is no pending suggestion to respond to."
+
+  defp humanize("must_disprove_with_held_card"),
+    do:
+      "You hold at least one of the three cards in the suggestion and must reveal one of them. " <>
+        "Call respond_to_suggestion with the slug of a matching card you hold — don't pass."
+
+  defp humanize("card_not_in_hand"),
+    do: "You don't hold the card you tried to reveal."
+
+  defp humanize("card_does_not_match_suggestion"),
+    do: "That card isn't one of the three cards in the current suggestion."
+
+  defp humanize("already_suggested_this_turn"),
+    do: "You've already made a suggestion this turn — make an accusation or end your turn."
+
+  defp humanize("game_over"), do: "The game is over."
+
+  defp humanize("player_eliminated"),
+    do: "You made a wrong accusation earlier and can no longer take actions on your turn."
+
+  defp humanize("player_has_no_character"),
+    do: "You haven't been assigned a character in this game."
+
+  defp humanize("character_not_placed"),
+    do: "Your character isn't placed in a room yet."
+
+  defp humanize("missing_args"),
+    do: "Required arguments are missing or malformed."
+
+  defp humanize("missing_arg_to_room_slug"),
+    do: "Required argument missing: to_room_slug."
+
+  defp humanize("invalid_player_shape"),
+    do: "Player data is malformed."
+
+  defp humanize("duplicate_player_ids"),
+    do: "Player ids must be unique."
+
+  defp humanize("invalid_players"),
+    do: "Player list is malformed."
+
+  defp humanize("not_placed"),
+    do: "Your character isn't currently in a room."
+
+  defp humanize("game_not_running"),
+    do: "The game server isn't running."
+
+  # Unknown engine error: return the raw atom/snake_case as-is. This
+  # surfaces the gap rather than hiding it; future cases can be added.
+  defp humanize(other), do: other
+
+  defp room_name(slug) do
+    case slug do
+      "study" -> "Study"
+      "hall" -> "Hall"
+      "lounge" -> "Lounge"
+      "library" -> "Library"
+      "billiard" -> "Billiard Room"
+      "dining" -> "Dining Room"
+      "conservatory" -> "Conservatory"
+      "ballroom" -> "Ballroom"
+      "kitchen" -> "Kitchen"
+      _ -> slug
+    end
+  end
 
   @doc "Build a parse-error response (used when the request body is malformed JSON)."
   @spec parse_error_response() :: map()
