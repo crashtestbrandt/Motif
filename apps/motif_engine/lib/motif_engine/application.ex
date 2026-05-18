@@ -6,7 +6,9 @@ defmodule MotifEngine.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Boltx, Application.fetch_env!(:boltx, MotifEngine.Bolt)}
+      {Boltx, Application.fetch_env!(:boltx, MotifEngine.Bolt)},
+      {Registry, keys: :unique, name: MotifEngine.GameRegistry},
+      MotifEngine.GameSupervisor
     ]
 
     opts = [strategy: :one_for_one, name: MotifEngine.Supervisor]

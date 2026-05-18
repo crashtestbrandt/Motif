@@ -7,4 +7,6 @@ defmodule Motif do
 
   defdelegate ping, to: MotifEngine.Repo
   defdelegate start_game(rules_module, opts), to: MotifEngine
+  defdelegate submit_intent(game_id, intent), to: MotifEngine
+  defdelegate legal_actions(game_id, player_id), to: MotifEngine
 end

@@ -86,13 +86,107 @@ defmodule MotifEngine.Rules.Clue do
   end
 
   @impl true
-  def legal_actions(_snapshot, _player_id), do: []
+  def legal_actions(snapshot, player_id) do
+    if snapshot.current_turn_player_id == player_id do
+      case character_for(snapshot, player_id) do
+        nil -> []
+        char -> move_intents_from(snapshot, player_id, char.room_slug)
+      end
+    else
+      []
+    end
+  end
 
   @impl true
-  def apply_intent(_snapshot, _intent), do: {:error, :not_yet_implemented}
+  def apply_intent(snapshot, %{type: :move_to_room, player_id: pid, to_room_slug: dest}) do
+    with :ok <- check_turn(snapshot, pid),
+         {:ok, character} <- fetch_character(snapshot, pid),
+         {:ok, from_slug} <- fetch_current_room(character),
+         :ok <- check_destination_exists(snapshot, dest),
+         :ok <- check_reachable(snapshot, from_slug, dest) do
+      {:ok, move_mutations(snapshot.game_id, character.id, dest)}
+    end
+  end
+
+  def apply_intent(_snapshot, intent), do: {:error, {:unknown_intent, intent}}
 
   @impl true
   def view_for(_snapshot, _player_id), do: %{}
+
+  # ---- move logic ---------------------------------------------------------
+
+  defp character_for(snapshot, player_id) do
+    Enum.find(snapshot.characters, &(&1.player_id == player_id))
+  end
+
+  defp move_intents_from(snapshot, player_id, room_slug) do
+    case snapshot.rooms[room_slug] do
+      nil ->
+        []
+
+      room ->
+        (room.connects_to ++ room.secret_passages_to)
+        |> Enum.uniq()
+        |> Enum.map(&%{type: :move_to_room, player_id: player_id, to_room_slug: &1})
+    end
+  end
+
+  defp check_turn(snapshot, pid) do
+    if snapshot.current_turn_player_id == pid, do: :ok, else: {:error, :not_your_turn}
+  end
+
+  defp fetch_character(snapshot, pid) do
+    case character_for(snapshot, pid) do
+      nil -> {:error, :player_has_no_character}
+      char -> {:ok, char}
+    end
+  end
+
+  defp fetch_current_room(%{room_slug: nil}), do: {:error, :character_not_placed}
+  defp fetch_current_room(%{room_slug: slug}), do: {:ok, slug}
+
+  defp check_destination_exists(snapshot, slug) do
+    if Map.has_key?(snapshot.rooms, slug), do: :ok, else: {:error, {:unknown_room, slug}}
+  end
+
+  defp check_reachable(snapshot, from_slug, to_slug) do
+    room = snapshot.rooms[from_slug]
+    options = room.connects_to ++ room.secret_passages_to
+
+    if to_slug in options do
+      :ok
+    else
+      {:error, {:unreachable_room, from: from_slug, to: to_slug}}
+    end
+  end
+
+  defp move_mutations(game_id, character_id, dest_slug) do
+    [
+      Mutation.new(
+        """
+        MATCH (c:Character {id: $char_id})-[r:LOCATED_IN]->(:Room)
+        DELETE r
+        """,
+        %{char_id: character_id}
+      ),
+      Mutation.new(
+        """
+        MATCH (c:Character {id: $char_id})
+        MATCH (room:Room {slug: $dest_slug})-[:IN_GAME]->(:Game {id: $game_id})
+        CREATE (c)-[:LOCATED_IN]->(room)
+        """,
+        %{char_id: character_id, dest_slug: dest_slug, game_id: game_id}
+      ),
+      Mutation.new(
+        """
+        MATCH (g:Game {id: $game_id})-[r:CURRENT_TURN]->(:Player)-[:NEXT]->(next:Player)
+        DELETE r
+        CREATE (g)-[:CURRENT_TURN]->(next)
+        """,
+        %{game_id: game_id}
+      )
+    ]
+  end
 
   # ---- opt parsing & validation -------------------------------------------
 

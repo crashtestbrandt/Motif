@@ -29,6 +29,18 @@ defmodule MotifEngine.Repo do
   end
 
   @doc """
+  Run a read-only Cypher query and return all result rows as a list of maps
+  (column name → value).
+  """
+  @spec query_all(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
+  def query_all(statement, params \\ %{}) when is_binary(statement) and is_map(params) do
+    case Boltx.query(@conn, statement, params) do
+      {:ok, response} -> {:ok, response.results}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
   Apply a list of mutations in a single Bolt transaction. All or nothing.
 
   This is the *only* sanctioned write path — the rule engine produces
