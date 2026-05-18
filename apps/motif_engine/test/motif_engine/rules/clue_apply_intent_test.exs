@@ -64,16 +64,16 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
   end
 
   describe "apply_intent :move_to_room" do
-    test "produces 3 mutations for a legal corridor move" do
+    test "produces 2 mutations for a legal corridor move (move only; turn does NOT advance)" do
       intent = %{type: :move_to_room, player_id: "p1", to_room_slug: "study"}
       assert {:ok, mutations} = Clue.apply_intent(snapshot(), intent)
-      assert length(mutations) == 3
+      assert length(mutations) == 2
       assert Enum.all?(mutations, &match?(%Mutation{}, &1))
 
-      [delete, create, advance] = mutations
+      [delete, create] = mutations
       assert delete.statement =~ "DELETE r"
       assert create.statement =~ "CREATE (c)-[:LOCATED_IN]->(room)"
-      assert advance.statement =~ "[:CURRENT_TURN]"
+      refute Enum.any?(mutations, &(&1.statement =~ "CURRENT_TURN"))
     end
 
     test "permits a secret-passage move (study → kitchen via passage)" do
@@ -114,13 +114,32 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
     end
   end
 
+  describe "apply_intent :end_turn" do
+    test "produces one CURRENT_TURN advance mutation for the current player" do
+      intent = %{type: :end_turn, player_id: "p1"}
+      assert {:ok, [mutation]} = Clue.apply_intent(snapshot(), intent)
+      assert match?(%Mutation{}, mutation)
+      assert mutation.statement =~ "CURRENT_TURN"
+    end
+
+    test "rejects end_turn when it isn't the caller's turn" do
+      intent = %{type: :end_turn, player_id: "p2"}
+      assert {:error, :not_your_turn} = Clue.apply_intent(snapshot(), intent)
+    end
+  end
+
   describe "legal_actions" do
-    test "returns one move per adjacent room for the current player" do
+    test "returns one move per adjacent room PLUS an end_turn for the current player" do
       actions = Clue.legal_actions(snapshot(), "p1")
-      destinations = actions |> Enum.map(& &1.to_room_slug) |> Enum.sort()
+
+      moves = Enum.filter(actions, &(&1.type == :move_to_room))
+      end_turns = Enum.filter(actions, &(&1.type == :end_turn))
+
+      destinations = moves |> Enum.map(& &1.to_room_slug) |> Enum.sort()
       assert destinations == ["billiard", "lounge", "study"]
-      assert Enum.all?(actions, &(&1.type == :move_to_room))
-      assert Enum.all?(actions, &(&1.player_id == "p1"))
+      assert Enum.all?(moves, &(&1.player_id == "p1"))
+
+      assert end_turns == [%{type: :end_turn, player_id: "p1"}]
     end
 
     test "returns secret-passage destinations alongside corridor ones" do
@@ -133,7 +152,11 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
       }
 
       destinations =
-        snap |> Clue.legal_actions("p1") |> Enum.map(& &1.to_room_slug) |> Enum.sort()
+        snap
+        |> Clue.legal_actions("p1")
+        |> Enum.filter(&(&1.type == :move_to_room))
+        |> Enum.map(& &1.to_room_slug)
+        |> Enum.sort()
 
       assert destinations == ["hall", "kitchen", "library"]
     end
@@ -142,9 +165,9 @@ defmodule MotifEngine.Rules.ClueApplyIntentTest do
       assert Clue.legal_actions(snapshot(), "p2") == []
     end
 
-    test "returns [] when the player has no character" do
+    test "still returns an end_turn even when the player has no character" do
       snap = %{snapshot() | characters: []}
-      assert Clue.legal_actions(snap, "p1") == []
+      assert Clue.legal_actions(snap, "p1") == [%{type: :end_turn, player_id: "p1"}]
     end
   end
 

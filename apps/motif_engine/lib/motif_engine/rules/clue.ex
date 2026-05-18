@@ -88,10 +88,13 @@ defmodule MotifEngine.Rules.Clue do
   @impl true
   def legal_actions(snapshot, player_id) do
     if snapshot.current_turn_player_id == player_id do
-      case character_for(snapshot, player_id) do
-        nil -> []
-        char -> move_intents_from(snapshot, player_id, char.room_slug)
-      end
+      moves =
+        case character_for(snapshot, player_id) do
+          nil -> []
+          char -> move_intents_from(snapshot, player_id, char.room_slug)
+        end
+
+      moves ++ [%{type: :end_turn, player_id: player_id}]
     else
       []
     end
@@ -105,6 +108,12 @@ defmodule MotifEngine.Rules.Clue do
          :ok <- check_destination_exists(snapshot, dest),
          :ok <- check_reachable(snapshot, from_slug, dest) do
       {:ok, move_mutations(snapshot.game_id, character.id, dest)}
+    end
+  end
+
+  def apply_intent(snapshot, %{type: :end_turn, player_id: pid}) do
+    with :ok <- check_turn(snapshot, pid) do
+      {:ok, [advance_turn_mutation(snapshot.game_id)]}
     end
   end
 
@@ -176,16 +185,19 @@ defmodule MotifEngine.Rules.Clue do
         CREATE (c)-[:LOCATED_IN]->(room)
         """,
         %{char_id: character_id, dest_slug: dest_slug, game_id: game_id}
-      ),
-      Mutation.new(
-        """
-        MATCH (g:Game {id: $game_id})-[r:CURRENT_TURN]->(:Player)-[:NEXT]->(next:Player)
-        DELETE r
-        CREATE (g)-[:CURRENT_TURN]->(next)
-        """,
-        %{game_id: game_id}
       )
     ]
+  end
+
+  defp advance_turn_mutation(game_id) do
+    Mutation.new(
+      """
+      MATCH (g:Game {id: $game_id})-[r:CURRENT_TURN]->(:Player)-[:NEXT]->(next:Player)
+      DELETE r
+      CREATE (g)-[:CURRENT_TURN]->(next)
+      """,
+      %{game_id: game_id}
+    )
   end
 
   # ---- opt parsing & validation -------------------------------------------

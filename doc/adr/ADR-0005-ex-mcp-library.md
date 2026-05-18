@@ -5,6 +5,7 @@ ADR-0005: `ex_mcp` as the MCP server and client library
 
 ## Status
 Accepted — 2026-05-18 — Owner: Brandt Frazier
+**Partially superseded by [ADR-0013](ADR-0013-homegrown-mcp-http-adapter.md) (2026-05-18)** for the prototype's server-side implementation. `ex_mcp` remains the intended landing place once its handler interface exposes session-bound identity; the rationale below stands for that future-state choice.
 
 ## Context
 The architecture (ADR-0001) requires that the LLM communicate with the engine exclusively over MCP (Model Context Protocol). Therefore we need:
@@ -43,3 +44,4 @@ Use **`ex_mcp`** (Hex: https://hex.pm/packages/ex_mcp, GitHub: https://github.co
 - `ex_mcp` on Hex: https://hex.pm/packages/ex_mcp
 - MCP spec: https://modelcontextprotocol.io
 - ADR-0001 (architectural boundaries), ADR-0008 (MCP transport choice), ADR-0009 (session auth in MCP)
+- ADR-0013 (homegrown adapter shipping the prototype; explains the conflict in detail)

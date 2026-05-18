@@ -1,8 +1,8 @@
 defmodule MotifMcpTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   doctest MotifMcp
 
-  test "greets the world" do
-    assert MotifMcp.hello() == :world
+  test "facade delegates issue_token to MotifMcp.Auth" do
+    assert {:ok, "tok-" <> _} = MotifMcp.issue_token("g-x", "p-x")
   end
 end

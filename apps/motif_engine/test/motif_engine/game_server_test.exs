@@ -25,38 +25,23 @@ defmodule MotifEngine.GameServerTest do
   end
 
   describe "submit_intent :move_to_room" do
-    test "moves the character and advances the turn cursor",
-         %{game_id: game_id, players: [p1, p2]} do
+    test "moves the character WITHOUT advancing the turn cursor",
+         %{game_id: game_id, players: [p1, _p2]} do
       {:ok, snap0} = Snapshot.load(game_id)
       assert snap0.current_turn_player_id == p1.id
 
       char1 = Enum.find(snap0.characters, &(&1.player_id == p1.id))
       assert char1.room_slug == "hall"
 
-      {:ok, [intent | _]} = GameServer.legal_actions(game_id, p1.id)
-
-      assert :ok = GameServer.submit_intent(game_id, intent)
+      move = first_move_intent(game_id, p1.id)
+      assert :ok = GameServer.submit_intent(game_id, move)
 
       {:ok, snap1} = Snapshot.load(game_id)
-      assert snap1.current_turn_player_id == p2.id
+      # Still p1's turn — moves alone don't advance the cursor.
+      assert snap1.current_turn_player_id == p1.id
 
       char1_after = Enum.find(snap1.characters, &(&1.player_id == p1.id))
-      assert char1_after.room_slug == intent.to_room_slug
-    end
-
-    test "two consecutive moves rotate the turn ring back to p1",
-         %{game_id: game_id, players: [p1, p2]} do
-      {:ok, [intent_a | _]} = GameServer.legal_actions(game_id, p1.id)
-      :ok = GameServer.submit_intent(game_id, intent_a)
-
-      {:ok, snap1} = Snapshot.load(game_id)
-      assert snap1.current_turn_player_id == p2.id
-
-      {:ok, [intent_b | _]} = GameServer.legal_actions(game_id, p2.id)
-      :ok = GameServer.submit_intent(game_id, intent_b)
-
-      {:ok, snap2} = Snapshot.load(game_id)
-      assert snap2.current_turn_player_id == p1.id
+      assert char1_after.room_slug == move.to_room_slug
     end
 
     test "rejects moves when it isn't the caller's turn",
@@ -72,10 +57,38 @@ defmodule MotifEngine.GameServerTest do
       assert {:error, {:unreachable_room, from: "hall", to: "kitchen"}} =
                GameServer.submit_intent(game_id, illegal)
     end
+  end
 
-    test "via Motif facade also works", %{game_id: game_id, players: [p1, _p2]} do
-      {:ok, [intent | _]} = Motif.legal_actions(game_id, p1.id)
-      assert :ok = Motif.submit_intent(game_id, intent)
+  describe "submit_intent :end_turn" do
+    test "advances the cursor to the next player",
+         %{game_id: game_id, players: [p1, p2]} do
+      assert :ok = GameServer.submit_intent(game_id, %{type: :end_turn, player_id: p1.id})
+
+      {:ok, snap1} = Snapshot.load(game_id)
+      assert snap1.current_turn_player_id == p2.id
+    end
+
+    test "rejects end_turn when it isn't the caller's turn",
+         %{game_id: game_id, players: [_p1, p2]} do
+      assert {:error, :not_your_turn} =
+               GameServer.submit_intent(game_id, %{type: :end_turn, player_id: p2.id})
+    end
+
+    test "two end_turns rotate the ring back to p1",
+         %{game_id: game_id, players: [p1, p2]} do
+      :ok = GameServer.submit_intent(game_id, %{type: :end_turn, player_id: p1.id})
+
+      {:ok, snap1} = Snapshot.load(game_id)
+      assert snap1.current_turn_player_id == p2.id
+
+      :ok = GameServer.submit_intent(game_id, %{type: :end_turn, player_id: p2.id})
+
+      {:ok, snap2} = Snapshot.load(game_id)
+      assert snap2.current_turn_player_id == p1.id
+    end
+
+    test "Motif facade also works", %{game_id: game_id, players: [p1, _p2]} do
+      assert :ok = Motif.submit_intent(game_id, %{type: :end_turn, player_id: p1.id})
     end
   end
 
@@ -89,6 +102,11 @@ defmodule MotifEngine.GameServerTest do
     test "legal_actions returns :game_not_running" do
       assert {:error, :game_not_running} = GameServer.legal_actions("g-does-not-exist", "p1")
     end
+  end
+
+  defp first_move_intent(game_id, player_id) do
+    {:ok, actions} = GameServer.legal_actions(game_id, player_id)
+    Enum.find(actions, &(&1.type == :move_to_room))
   end
 
   defp cleanup(game_id) do

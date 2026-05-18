@@ -3,11 +3,11 @@ defmodule Mix.Tasks.Motif.DemoMoves do
 
   @moduledoc """
   Milestone-3 demo: spins up a fresh game, picks the first legal move for
-  the current player, applies it, then repeats for the next player.
+  the current player, applies it, ends the turn, then repeats for the next
+  player.
 
-  Each move advances `:CURRENT_TURN` along the `:NEXT` ring. After the
-  task exits, open Neo4j Browser at http://localhost:7474 and run the
-  printed query to see the pawns in their new rooms.
+  After the task exits, open Neo4j Browser at http://localhost:7474 and
+  run the printed query to see the pawns in their new rooms.
 
       mix motif.demo_moves
   """
@@ -48,16 +48,18 @@ defmodule Mix.Tasks.Motif.DemoMoves do
   defp play_move(game_id, turn_no) do
     {:ok, snapshot} = Snapshot.load(game_id)
     current_pid = snapshot.current_turn_player_id
-    {:ok, [intent | _]} = GameServer.legal_actions(game_id, current_pid)
+    {:ok, actions} = GameServer.legal_actions(game_id, current_pid)
+    move = Enum.find(actions, &(&1.type == :move_to_room))
 
     char = Enum.find(snapshot.characters, &(&1.player_id == current_pid))
 
     Mix.shell().info(
       "turn #{turn_no}: #{name_of(snapshot, current_pid)} moves #{char.name} " <>
-        "from #{char.room_slug} → #{intent.to_room_slug}"
+        "from #{char.room_slug} → #{move.to_room_slug}"
     )
 
-    :ok = GameServer.submit_intent(game_id, intent)
+    :ok = GameServer.submit_intent(game_id, move)
+    :ok = GameServer.submit_intent(game_id, %{type: :end_turn, player_id: current_pid})
   end
 
   defp name_of(snapshot, player_id) do

@@ -46,6 +46,45 @@ defmodule MotifEngine do
   @spec legal_actions(Rules.game_id(), Rules.player_id()) :: {:ok, [map()]} | {:error, term()}
   defdelegate legal_actions(game_id, player_id), to: GameServer
 
+  @doc """
+  Read-only: list the cards held by `player_id` in `game_id`. Private to
+  the calling player — see ADR-0009.
+  """
+  @spec get_player_hand(Rules.game_id(), Rules.player_id()) ::
+          {:ok, [%{kind: String.t(), name: String.t()}]} | {:error, term()}
+  def get_player_hand(game_id, player_id) do
+    cypher = """
+    MATCH (p:Player {id: $player_id})-[:IN_GAME]->(:Game {id: $game_id})
+    MATCH (p)-[:HOLDS]->(c:Card)
+    RETURN c.kind AS kind, c.name AS name
+    ORDER BY c.kind, c.name
+    """
+
+    case Repo.query_all(cypher, %{player_id: player_id, game_id: game_id}) do
+      {:ok, rows} -> {:ok, Enum.map(rows, &%{kind: &1["kind"], name: &1["name"]})}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Read-only: return the room the player's character is currently in.
+  """
+  @spec get_player_location(Rules.game_id(), Rules.player_id()) ::
+          {:ok, %{room_slug: String.t(), room_name: String.t()}} | {:error, term()}
+  def get_player_location(game_id, player_id) do
+    cypher = """
+    MATCH (p:Player {id: $player_id})-[:IN_GAME]->(:Game {id: $game_id})
+    MATCH (p)-[:PLAYS_AS]->(c:Character)-[:LOCATED_IN]->(r:Room)
+    RETURN r.slug AS slug, r.name AS name
+    """
+
+    case Repo.query_all(cypher, %{player_id: player_id, game_id: game_id}) do
+      {:ok, [row]} -> {:ok, %{room_slug: row["slug"], room_name: row["name"]}}
+      {:ok, []} -> {:error, :not_placed}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp generate_game_id, do: "g-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
 
   defp generate_seed, do: :rand.uniform(1_000_000_000)
