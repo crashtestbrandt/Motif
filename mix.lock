@@ -1,0 +1,5 @@
+%{
+  "boltx": {:hex, :boltx, "0.0.6", "c6a396b1538b258e4d5ee2a94aaf8fb2c7879240efffba94b9159dbdce963790", [:mix], [{:db_connection, "~> 2.6.0", [hex: :db_connection, repo: "hexpm", optional: false]}, {:jason, "~> 1.4", [hex: :jason, repo: "hexpm", optional: true]}, {:poison, "~> 5.0", [hex: :poison, repo: "hexpm", optional: true]}], "hexpm", "576b8f21a2021674130d04cd1fc79a4829a23d2cdf50641b3d7a00ce31b98ead"},
+  "db_connection": {:hex, :db_connection, "2.6.0", "77d835c472b5b67fc4f29556dee74bf511bbafecdcaf98c27d27fa5918152086", [:mix], [{:telemetry, "~> 0.4 or ~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "c2f992d15725e721ec7fbc1189d4ecdb8afef76648c746a8e1cad35e3b8a35f3"},
+  "telemetry": {:hex, :telemetry, "1.4.2", "a0cb522801dffb1c49fe6e30561badffc7b6d0e180db1300df759faa22062855", [:rebar3], [], "hexpm", "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1"},
+}
