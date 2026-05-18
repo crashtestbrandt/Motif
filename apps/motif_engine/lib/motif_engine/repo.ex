@@ -7,6 +7,8 @@ defmodule MotifEngine.Repo do
   see ADR-0006 and ADR-0010.
   """
 
+  alias MotifEngine.Cypher.Mutation
+
   @conn MotifEngine.Bolt
 
   @doc """
@@ -23,6 +25,29 @@ defmodule MotifEngine.Repo do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  @doc """
+  Apply a list of mutations in a single Bolt transaction. All or nothing.
+
+  This is the *only* sanctioned write path — the rule engine produces
+  mutations; this function commits them.
+  """
+  @spec transaction([Mutation.t()]) :: :ok | {:error, term()}
+  def transaction(mutations) when is_list(mutations) do
+    result =
+      Boltx.transaction(@conn, fn conn ->
+        Enum.each(mutations, fn %Mutation{statement: stmt, params: params} ->
+          Boltx.query!(conn, stmt, params)
+        end)
+
+        :ok
+      end)
+
+    case result do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 end

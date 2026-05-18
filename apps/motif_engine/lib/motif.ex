@@ -6,4 +6,5 @@ defmodule Motif do
   """
 
   defdelegate ping, to: MotifEngine.Repo
+  defdelegate start_game(rules_module, opts), to: MotifEngine
 end
