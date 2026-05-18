@@ -1,8 +1,7 @@
 defmodule MotifWebTest do
-  use ExUnit.Case
-  doctest MotifWeb
+  use ExUnit.Case, async: true
 
-  test "greets the world" do
-    assert MotifWeb.hello() == :world
+  test "the Phoenix endpoint is configured for port 4000" do
+    assert {:ok, 4000} = Keyword.fetch(MotifWeb.Endpoint.config(:http), :port)
   end
 end

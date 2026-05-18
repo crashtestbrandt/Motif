@@ -5,6 +5,7 @@ ADR-0012: Player chat surface — Phoenix LiveView + direct Anthropic API
 
 ## Status
 Accepted — 2026-05-18 — Owner: Brandt Frazier
+**Partially superseded by [ADR-0014](ADR-0014-self-hosted-llm-only.md) (2026-05-18)** — the Anthropic-API portion is replaced; Phoenix LiveView as the chat surface remains.
 
 ## Context
 Each player needs a chat surface to interact with the LLM (ADR-0001 assumption 1). The chat surface needs to:

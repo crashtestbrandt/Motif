@@ -16,7 +16,7 @@ A secondary purpose is for Brandt to learn idiomatic **Elixir + Cypher + Neo4j**
 **Scope (confirmed):**
 - Clue with **rooms-as-graph** movement (incl. secret passages); no dice/grid.
 - **2–6 human players** in their own browser sessions; no AI opponents.
-- Each player's chat surface is a **Phoenix LiveView** pane driven by direct Anthropic API calls (Claude with tool use).
+- Each player's chat surface is a **Phoenix LiveView** pane driven by a **self-hosted, OpenAI-compatible LLM** (ADR-0014). Dev default: LM Studio on `127.0.0.1:1234/v1`; prod target is vLLM or llama.cpp's server.
 
 ## Library choices
 

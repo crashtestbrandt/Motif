@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <.live_title default="motif" suffix=" · motif">
+      {assigns[:page_title]}
+    </.live_title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fafaf7;
+        --fg: #1f1f1c;
+        --muted: #6b6b66;
+        --border: #d8d6cf;
+        --accent: #6b3410;
+        --user-bubble: #efece4;
+        --asst-bubble: #f5e9d6;
+        --tool-bubble: #e3edf5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1a1814;
+          --fg: #ebe7df;
+          --muted: #918c80;
+          --border: #34302a;
+          --accent: #d4a574;
+          --user-bubble: #2a2620;
+          --asst-bubble: #322a1c;
+          --tool-bubble: #1f2a36;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      a { color: var(--accent); }
+      code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .container { max-width: 760px; margin: 0 auto; padding: 1.25rem; }
+      header.app {
+        border-bottom: 1px solid var(--border);
+        padding: 0.5rem 1rem;
+        display: flex;
+        gap: 1rem;
+        align-items: baseline;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      header.app .title {
+        color: var(--fg);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    {@inner_content}
+  </body>
+</html>

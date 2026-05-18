@@ -16,7 +16,7 @@ A secondary goal is for the owner (Brandt) to learn idiomatic **Elixir + OTP + C
 | Layer | Choice | ADR |
 |---|---|---|
 | Language / runtime | Elixir on the BEAM, OTP idioms | [ADR-0002](doc/adr/ADR-0002-elixir-otp-platform.md) |
-| Web tier | Phoenix LiveView; Anthropic API via `req` | [ADR-0012](doc/adr/ADR-0012-phoenix-liveview-chat-surface.md) |
+| Web tier | Phoenix LiveView; self-hosted OpenAI-compatible LLM via `req` | [ADR-0012](doc/adr/ADR-0012-phoenix-liveview-chat-surface.md), [ADR-0014](doc/adr/ADR-0014-self-hosted-llm-only.md) |
 | MCP | `ex_mcp` over SSE on `127.0.0.1` | [ADR-0005](doc/adr/ADR-0005-ex-mcp-library.md), [ADR-0008](doc/adr/ADR-0008-mcp-transport-local-sse.md) |
 | Rule engine | Pure rule functions + per-game `gen_statem` write coordinator; rules implement a behaviour | [ADR-0006](doc/adr/ADR-0006-rule-engine-pure-rules-and-write-coordinator.md), [ADR-0007](doc/adr/ADR-0007-rules-packaged-per-game-via-behaviour.md) |
 | Storage | Neo4j 5.x via Docker, accessed through `boltx` | [ADR-0003](doc/adr/ADR-0003-neo4j-as-knowledge-graph.md), [ADR-0004](doc/adr/ADR-0004-boltx-neo4j-driver.md) |

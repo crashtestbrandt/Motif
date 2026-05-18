@@ -1,0 +1,21 @@
+<header class="app">
+  <span class="title">motif</span>
+  <span>·</span>
+  <span>Clue prototype</span>
+  <span style="margin-left:auto">{assigns[:player_name] || ""}</span>
+</header>
+<main>
+  {@inner_content}
+</main>
+<script defer src="/assets/phoenix/phoenix.min.js"></script>
+<script defer src="/assets/live_view/phoenix_live_view.min.js"></script>
+<script defer>
+  document.addEventListener("DOMContentLoaded", () => {
+    const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
+    const liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
+      params: { _csrf_token: csrfToken }
+    });
+    liveSocket.connect();
+    window.liveSocket = liveSocket;
+  });
+</script>

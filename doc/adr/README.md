@@ -21,8 +21,9 @@ See [CLAUDE.md](../../CLAUDE.md) for the criteria on when an ADR is required and
 | 0009 | [`player_id` bound at MCP session handshake, never as a tool argument](ADR-0009-player-id-bound-at-mcp-session.md) | Accepted (2026-05-18) |
 | 0010 | [Knowledge graph is authoritative; no event log, no cache](ADR-0010-graph-is-authoritative.md)  | Accepted (2026-05-18) |
 | 0011 | [Mix umbrella project layout with three apps](ADR-0011-umbrella-project-layout.md)              | Accepted (2026-05-18) |
-| 0012 | [Player chat surface — Phoenix LiveView + direct Anthropic API](ADR-0012-phoenix-liveview-chat-surface.md) | Accepted (2026-05-18) |
+| 0012 | [Player chat surface — Phoenix LiveView + direct Anthropic API](ADR-0012-phoenix-liveview-chat-surface.md) | Accepted (2026-05-18); partially superseded by ADR-0014 |
 | 0013 | [Homegrown MCP-compatible HTTP+JSON-RPC adapter for the prototype](ADR-0013-homegrown-mcp-http-adapter.md) | Accepted (2026-05-18) |
+| 0014 | [Chat surface always uses a self-hosted, OpenAI-compatible LLM endpoint](ADR-0014-self-hosted-llm-only.md) | Accepted (2026-05-18) |
 
 ## Template
 New ADRs start from [`ADR-TEMPLATE.md`](ADR-TEMPLATE.md).

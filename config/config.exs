@@ -15,3 +15,26 @@ config :boltx, MotifEngine.Bolt,
 config :motif_mcp,
   http_ip: {127, 0, 0, 1},
   http_port: 4001
+
+# motif_web Phoenix endpoint.
+config :motif_web, MotifWeb.Endpoint,
+  url: [host: "localhost"],
+  http: [ip: {127, 0, 0, 1}, port: 4000],
+  adapter: Bandit.PhoenixAdapter,
+  render_errors: [
+    formats: [html: MotifWeb.ErrorHTML],
+    layout: false
+  ],
+  pubsub_server: MotifWeb.PubSub,
+  live_view: [signing_salt: "motif-dev-signing-salt"],
+  secret_key_base: "motif-dev-secret-key-base-please-replace-in-prod-this-is-just-for-dev",
+  server: true
+
+config :motif_web,
+  mcp_base_url: "http://127.0.0.1:4001",
+  # Self-hosted, OpenAI-compatible inference endpoint (ADR-0014).
+  # Dev default: LM Studio. Override via LLM_BASE_URL / LLM_MODEL at runtime.
+  llm_base_url: "http://127.0.0.1:1234/v1",
+  llm_model: "local-model"
+
+config :phoenix, :json_library, Jason
