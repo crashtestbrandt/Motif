@@ -34,6 +34,12 @@ apps/*/.elixir_ls/
 # Mix locals / installer caches
 .mix/
 
+# Nix flake — project-local Mix metadata (see flake.nix shellHook)
+.nix-mix/
+.nix-hex/
+result
+result-*
+
 # ---- Phoenix / Asset pipeline ----------------------------------------------
 # esbuild + tailwind in modern Phoenix output to priv/static/assets
 apps/motif_web/priv/static/assets/

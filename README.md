@@ -127,12 +127,15 @@ The engine **never pushes** anything across the MCP wire. PubSub is internal to 
 
 ### Prerequisites
 
-- **Elixir 1.17 + OTP 27** (`.tool-versions` is committed; if you use [asdf](https://asdf-vm.com), `asdf install` will pick them up)
-- **Docker** (for Neo4j; bundled Compose v2+)
+- **Elixir 1.17 + OTP 27.** Pick one:
+  - **Nix** (recommended for reproducibility): `nix develop` drops you into a shell with the right Elixir/Erlang. See [Nix flake](#nix-flake) below.
+  - **asdf**: `.tool-versions` is committed; `asdf install` will read it.
+  - **Native install**: Elixir 1.17 against OTP 27, however your platform packages them.
+- **Docker** (for Neo4j; bundled Compose v2+).
 - **A self-hosted LLM server** speaking the OpenAI Chat Completions spec.
   Dev default: [LM Studio](https://lmstudio.ai/) at `http://127.0.0.1:1234/v1`.
   Other options: [vLLM](https://docs.vllm.ai/), [llama.cpp's server](https://github.com/ggerganov/llama.cpp/tree/master/examples/server), Ollama (with `/v1` prefix).
-  **Model must be tool-call capable** — Qwen 2.5 32B Instruct or larger is recommended. Smaller models will hallucinate hand contents and skip tool calls. See [postmortem in the milestone-6 thread](doc/) if you want the details.
+  **Model must be tool-call capable** — Qwen 2.5 32B Instruct or larger is recommended. Smaller models will hallucinate hand contents and skip tool calls.
 
 ### 1. Clone + install deps
 
@@ -201,6 +204,27 @@ Mix.Task.run("motif.demo_chat")
 It will print two URLs (one per player). Open each in its own browser tab; each tab is one player talking to Claude-shaped chat backed by your local model. Try things like *"what's in my hand?"*, *"move to the study"*, *"suggest plum with the rope"*. The other tab's LLM gets nudged automatically when it's their turn to disprove.
 
 Leave the iex session running for the duration of play.
+
+---
+
+### Nix flake
+
+A [`flake.nix`](flake.nix) is provided for reproducible BEAM toolchain provisioning. **It covers only Elixir + Erlang** — Docker and the LLM server are external concerns and intentionally outside the flake.
+
+```bash
+nix develop          # drops into a shell with Elixir 1.17 + OTP 27 on PATH
+```
+
+The shell hook puts Mix's metadata in `.nix-mix/` and `.nix-hex/` inside the project (both gitignored) so the global `~/.mix` is never touched.
+
+For automatic shell activation when you `cd` into the project, add a `.envrc` and use [direnv](https://direnv.net):
+
+```bash
+echo "use flake" > .envrc
+direnv allow
+```
+
+To format the flake itself: `nix fmt`.
 
 ---
 
