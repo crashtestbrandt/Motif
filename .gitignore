@@ -1,0 +1,169 @@
+# =============================================================================
+# motif .gitignore
+#
+# Stack: Elixir/Mix umbrella + Phoenix LiveView + Neo4j (Docker) + macOS dev.
+# Notes:
+#   - We DO NOT ignore /doc/ (used for ADRs and plans). If ExDoc is ever added,
+#     configure its output to /priv/static/doc or similar — don't repurpose /doc.
+#   - .tool-versions is intentionally NOT ignored — pinning the toolchain is
+#     part of the repo contract.
+#   - .claude/settings.json is shared; .claude/settings.local.json is personal.
+# =============================================================================
+
+# ---- Elixir / Mix ----------------------------------------------------------
+/_build/
+/cover/
+/deps/
+/.fetch
+/.elixir_ls/
+/.lexical/
+erl_crash.dump
+*.ez
+*.beam
+
+# Release artifacts
+/motif-*.tar
+/rel/artifacts/
+
+# Umbrella: per-app build/dep dirs (mix usually centralizes these, but be safe)
+apps/*/_build/
+apps/*/deps/
+apps/*/cover/
+apps/*/.elixir_ls/
+
+# Mix locals / installer caches
+.mix/
+
+# ---- Phoenix / Asset pipeline ----------------------------------------------
+# esbuild + tailwind in modern Phoenix output to priv/static/assets
+apps/motif_web/priv/static/assets/
+apps/motif_web/priv/static/cache_manifest.json
+
+# Node (only if/when we add a JS toolchain)
+apps/motif_web/assets/node_modules/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+
+# ---- Configuration & secrets -----------------------------------------------
+# Env files in any form
+.env
+.env.*
+!.env.example
+
+# Legacy Phoenix secret config (pre-runtime.exs); ignore aggressively
+*.secret.exs
+apps/*/config/*.secret.exs
+
+# Anthropic / third-party API key drops
+*.apikey
+secrets/
+
+# ---- Neo4j / Docker volumes ------------------------------------------------
+# If docker-compose.yml bind-mounts Neo4j data locally, ignore those dirs.
+/neo4j/data/
+/neo4j/logs/
+/neo4j/import/
+/neo4j/plugins/
+/neo4j/run/
+.neo4j/
+
+# Docker overrides (developer-local)
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# ---- Test / coverage / profiling -------------------------------------------
+/coverage/
+/cover/
+.coveralls/
+*.coverdata
+
+# Property test shrunk-counterexample dumps (ex_unit_properties, propcheck)
+/test/propcheck/
+/apps/*/test/propcheck/
+
+# Benchee / profiling output
+/benchmarks/output/
+*.benchee
+flame.html
+flame.svg
+
+# ---- Logs / runtime ---------------------------------------------------------
+*.log
+logs/
+tmp/
+apps/*/tmp/
+apps/*/logs/
+
+# ---- Editors / IDEs --------------------------------------------------------
+# VS Code (drop the line below if the team commits a shared .vscode/)
+.vscode/
+!.vscode/extensions.json
+
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Zed
+.zed/
+
+# Vim
+*.swp
+*.swo
+*.swn
+Session.vim
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# ctags / cscope
+tags
+TAGS
+cscope.*
+
+# ---- macOS -----------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+Icon?
+
+# ---- Linux / Windows (in case of cross-platform contributors) --------------
+*~
+.Trash-*
+.nfs*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---- Claude Code -----------------------------------------------------------
+# Per-user, machine-local Claude Code settings (the shared file is committed)
+.claude/settings.local.json
+.claude/*.local.json
+.claude/.session/
+.claude/logs/
+
+# ---- Miscellaneous ---------------------------------------------------------
+*.bak
+*.tmp
+*.orig
+*.rej
+.cache/
